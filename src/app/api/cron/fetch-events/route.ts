@@ -12,10 +12,17 @@ export async function GET(request: Request) {
   try {
     const supabase = createServerClient();
 
-    const [polymarketEvents, manifoldEvents] = await Promise.all([
+    // Fetch with graceful fallback — if one source fails, use the other
+    const results = await Promise.allSettled([
       fetchPolymarketEvents(),
       fetchManifoldEvents(),
     ]);
+
+    const polymarketEvents = results[0].status === "fulfilled" ? results[0].value : [];
+    const manifoldEvents = results[1].status === "fulfilled" ? results[1].value : [];
+
+    if (results[0].status === "rejected") console.warn("Polymarket fetch failed:", results[0].reason);
+    if (results[1].status === "rejected") console.warn("Manifold fetch failed:", results[1].reason);
 
     const allEvents = [...polymarketEvents, ...manifoldEvents];
     let upsertedCount = 0;
