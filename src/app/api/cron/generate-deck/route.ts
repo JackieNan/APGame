@@ -49,6 +49,9 @@ export async function GET(request: Request) {
 
     const eventIds = curatedDeck.events.map((e) => e.eventId);
 
+    // Delete existing deck for this date (allows regeneration)
+    await supabase.from("daily_decks").delete().eq("date", deckDate);
+
     const { data: deck, error: deckError } = await supabase
       .from("daily_decks")
       .insert({
