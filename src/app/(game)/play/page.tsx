@@ -90,12 +90,28 @@ export default function PlayPage() {
         reasoning_text: reasonings[event.id] || null,
       }));
 
-      const { error } = await supabase.from("predictions").insert(predictions);
+      const { data: inserted, error } = await supabase
+        .from("predictions")
+        .insert(predictions)
+        .select();
 
       if (error) {
-        toast.error("Failed to submit predictions: " + error.message);
+        toast.error("Failed to submit predictions: " + (error as any).message);
         setSubmitting(false);
         return;
+      }
+
+      // Trigger reasoning scoring for predictions with reasoning text (async, don't wait)
+      if (inserted) {
+        for (const pred of inserted as any[]) {
+          if (pred.reasoning_text) {
+            fetch("/api/reasoning", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ prediction_id: pred.id }),
+            }).catch(() => {}); // fire and forget
+          }
+        }
       }
 
       toast.success("Predictions submitted! The Oracle will judge soon.");

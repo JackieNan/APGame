@@ -11,11 +11,16 @@ import { Button } from "@/components/ui/button";
 interface ResultData {
   title: string;
   category: string;
+  timeHorizon: string;
   playerPrediction: string;
   actualOutcome: string;
-  oraclePrediction: string;
+  isPending: boolean;
+  oracleProbability: string;
+  oracleReasoning: string;
   isCorrect: boolean;
   isGolden: boolean;
+  reasoningFeedback: string | null;
+  reasoningScore: number | null;
   points: {
     base: number;
     contrarian: number;
@@ -46,11 +51,27 @@ export default function ResultsPage() {
         return;
       }
 
-      // Get today's deck
+      // Get latest deck the user played
+      const { data: userPreds } = await supabase
+        .from("predictions")
+        .select("deck_id")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      if (!userPreds || userPreds.length === 0) {
+        setIsLoading(false);
+        setNoResults(true);
+        return;
+      }
+
+      const deckId = (userPreds[0] as any).deck_id;
+
+      // Get deck info
       const { data: deck } = await supabase
         .from("daily_decks")
         .select("*")
-        .eq("date", today)
+        .eq("id", deckId)
         .single();
 
       if (!deck) {
@@ -61,12 +82,12 @@ export default function ResultsPage() {
 
       const deckData = deck as any;
 
-      // Get user predictions for today
+      // Get all user predictions for this deck
       const { data: predictions } = await supabase
         .from("predictions")
         .select("*")
         .eq("user_id", user.id)
-        .eq("deck_id", deckData.id);
+        .eq("deck_id", deckId);
 
       if (!predictions || predictions.length === 0) {
         setIsLoading(false);
@@ -74,7 +95,7 @@ export default function ResultsPage() {
         return;
       }
 
-      // Get events for this deck
+      // Get events
       const eventIds = deckData.event_ids as string[];
       const { data: events } = await supabase
         .from("events")
@@ -85,7 +106,7 @@ export default function ResultsPage() {
       const { data: oraclePreds } = await supabase
         .from("oracle_predictions")
         .select("*")
-        .eq("deck_id", deckData.id);
+        .eq("deck_id", deckId);
 
       // Get scores
       const predictionIds = predictions.map((p: any) => p.id);
@@ -104,20 +125,27 @@ export default function ResultsPage() {
         const score = scoresMap.get(pred.id) as any;
         const eventIndex = eventIds.indexOf(pred.event_id);
         const isGolden = eventIndex === deckData.golden_card_index;
-        const resolved = event?.resolution_status === "resolved";
+        const isPending = event?.resolution_status !== "resolved";
         const actualOutcome = event?.resolution_outcome ?? "Pending";
-        const isCorrect = resolved && pred.predicted_outcome?.toLowerCase() === actualOutcome?.toLowerCase();
+        const isCorrect =
+          !isPending &&
+          pred.predicted_outcome?.toLowerCase() === actualOutcome?.toLowerCase();
 
         return {
           title: event?.title ?? "Unknown Event",
           category: event?.category ?? "general",
+          timeHorizon: event?.time_horizon ?? "medium",
           playerPrediction: pred.predicted_outcome,
           actualOutcome,
-          oraclePrediction: oracle
+          isPending,
+          oracleProbability: oracle
             ? `${(oracle.predicted_probability * 100).toFixed(0)}% Yes`
             : "—",
-          isCorrect: isCorrect ?? false,
+          oracleReasoning: oracle?.claude_reasoning ?? "",
+          isCorrect,
           isGolden,
+          reasoningFeedback: pred.reasoning_feedback ?? null,
+          reasoningScore: pred.reasoning_score ?? null,
           points: {
             base: score?.base_points ?? 0,
             contrarian: score?.contrarian_bonus ?? 0,
@@ -130,7 +158,11 @@ export default function ResultsPage() {
       });
 
       setResults(mapped);
-      setTotalScore(mapped.reduce((sum, r) => sum + r.points.total, 0));
+      setTotalScore(
+        mapped
+          .filter((r) => !r.isPending)
+          .reduce((sum, r) => sum + r.points.total, 0)
+      );
       setIsLoading(false);
     }
 
@@ -161,18 +193,23 @@ export default function ResultsPage() {
     );
   }
 
-  const anyPending = results.some((r) => r.actualOutcome === "Pending");
+  const pendingCount = results.filter((r) => r.isPending).length;
+  const resolvedCount = results.length - pendingCount;
 
   return (
     <div className="space-y-6">
       <div className="text-center space-y-2">
         <h1 className="text-2xl font-bold text-amber-400">
-          {anyPending ? "Awaiting the Oracle's Judgment" : "Results Revealed"}
+          {pendingCount === results.length
+            ? "Predictions Submitted"
+            : resolvedCount === results.length
+              ? "Results Revealed"
+              : "Partial Results"}
         </h1>
         <p className="text-sm text-slate-400">
-          {anyPending
-            ? "Some events haven't resolved yet. Check back later."
-            : "See how your predictions fared against reality."}
+          {pendingCount > 0
+            ? `${pendingCount} event${pendingCount > 1 ? "s" : ""} awaiting resolution. Oracle's analysis is below.`
+            : "See how your predictions fared against reality and the Oracle."}
         </p>
       </div>
 
@@ -182,19 +219,21 @@ export default function ResultsPage() {
         ))}
       </div>
 
-      {!anyPending && (
+      {resolvedCount > 0 && (
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ delay: results.length * 0.3 + 0.5, duration: 0.4 }}
+          transition={{ delay: results.length * 0.2 + 0.5, duration: 0.4 }}
         >
           <Card className="bg-gradient-to-r from-amber-500/10 via-yellow-500/10 to-amber-500/10 border-amber-500/30">
             <CardContent className="pt-6 text-center space-y-2">
-              <p className="text-sm text-slate-400">Total Score</p>
+              <p className="text-sm text-slate-400">Score So Far</p>
               <p className="text-4xl font-bold text-amber-400 font-mono">
                 {totalScore}
               </p>
-              <p className="text-xs text-muted-foreground">points earned</p>
+              <p className="text-xs text-muted-foreground">
+                {resolvedCount}/{results.length} events resolved
+              </p>
             </CardContent>
           </Card>
         </motion.div>
