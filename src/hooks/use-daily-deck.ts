@@ -38,11 +38,13 @@ export function useDailyDeck() {
           data: { user },
         } = await supabase.auth.getUser();
 
-        // Fetch today's deck
+        // Fetch today's deck (or most recent available)
         const { data: deckData } = await supabase
           .from("daily_decks")
           .select("*")
-          .eq("date", today)
+          .lte("date", today)
+          .order("date", { ascending: false })
+          .limit(1)
           .single();
 
         if (!deckData) {

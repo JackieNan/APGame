@@ -45,9 +45,7 @@ export async function GET(request: Request) {
     const curatedDeck = await curateDailyDeck(curatorInput);
     const goldenCardIndex = Math.floor(Math.random() * 5);
 
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const deckDate = tomorrow.toISOString().split("T")[0];
+    const deckDate = new Date().toISOString().split("T")[0];
 
     const eventIds = curatedDeck.events.map((e) => e.eventId);
 

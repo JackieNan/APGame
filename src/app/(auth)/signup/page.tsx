@@ -39,16 +39,20 @@ export default function SignupPage() {
       return;
     }
 
-    // Insert into users table
+    // Create user profile via server API (bypasses RLS)
     if (data.user) {
-      const { error: insertError } = await supabase.from("users").insert({
-        id: data.user.id,
-        email,
-        display_name: displayName,
-      });
-
-      if (insertError) {
-        console.error("Failed to create user profile:", insertError);
+      try {
+        await fetch("/api/auth/create-profile", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            user_id: data.user.id,
+            email,
+            display_name: displayName,
+          }),
+        });
+      } catch (err) {
+        console.error("Failed to create profile:", err);
       }
     }
 
