@@ -17,7 +17,6 @@ import { ProbabilityGauge } from "@/components/probability-gauge";
 
 export interface PredictionEvent {
   id: string;
-  event_id: string;
   title: string;
   hook_text: string;
   category: string;

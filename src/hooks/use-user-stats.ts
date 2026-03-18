@@ -13,7 +13,6 @@ export interface UserStatsData {
   streak: number;
   rank: number | null;
   totalPredictions: number;
-  correctPredictions: number;
   accuracy: number;
   bestStreak: number;
   totalScore: number;
@@ -51,49 +50,71 @@ export function useUserStats() {
           return;
         }
 
-        // Fetch recent daily scores
-        const { data: recentResults } = await supabase
-          .from("daily_results")
-          .select("deck_date, total_score")
+        const p = profile as any;
+
+        // Count predictions
+        const { count: totalPredictions } = await supabase
+          .from("predictions")
+          .select("*", { count: "exact", head: true })
+          .eq("user_id", user.id);
+
+        // Count correct predictions (scores with base_points > 0)
+        const { count: correctCount } = await supabase
+          .from("scores")
+          .select("*", { count: "exact", head: true })
           .eq("user_id", user.id)
-          .order("deck_date", { ascending: false })
+          .gt("base_points", 0);
+
+        // Sum total score
+        const { data: scoreSum } = await supabase
+          .from("scores")
+          .select("total_points")
+          .eq("user_id", user.id);
+
+        const totalScore = (scoreSum ?? []).reduce(
+          (sum: number, s: any) => sum + (s.total_points ?? 0),
+          0
+        );
+
+        // Recent scores by date
+        const { data: recentScores } = await supabase
+          .from("scores")
+          .select("total_points, created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
           .limit(7);
 
-        // Fetch rank (count users with higher total score)
-        const { count: higherCount } = await supabase
-          .from("users")
-          .select("*", { count: "exact", head: true })
-          .gt("total_score", profile.total_score ?? 0);
+        // Fetch achievements
+        const { data: achievements } = await supabase
+          .from("achievements")
+          .select("achievement_type")
+          .eq("user_id", user.id);
 
         const { xpForLevel } = await import("@/lib/progression");
 
+        const total = totalPredictions ?? 0;
+        const correct = correctCount ?? 0;
+
         setStats({
           userId: user.id,
-          displayName: profile.display_name ?? "Oracle Seeker",
-          avatarUrl: profile.avatar_url ?? null,
-          level: profile.level ?? 1,
-          xp: profile.xp ?? 0,
-          xpForNextLevel: xpForLevel(profile.level ?? 1),
-          streak: profile.current_streak ?? 0,
-          rank: higherCount != null ? higherCount + 1 : null,
-          totalPredictions: profile.total_predictions ?? 0,
-          correctPredictions: profile.correct_predictions ?? 0,
-          accuracy:
-            profile.total_predictions > 0
-              ? Math.round(
-                  ((profile.correct_predictions ?? 0) /
-                    profile.total_predictions) *
-                    100
-                )
-              : 0,
-          bestStreak: profile.best_streak ?? 0,
-          totalScore: profile.total_score ?? 0,
+          displayName: p.display_name ?? "Oracle Seeker",
+          avatarUrl: p.avatar_url ?? null,
+          level: p.level ?? 1,
+          xp: p.xp ?? 0,
+          xpForNextLevel: xpForLevel(p.level ?? 1),
+          streak: p.current_streak ?? 0,
+          rank: null,
+          totalPredictions: total,
+          accuracy: total > 0 ? Math.round((correct / total) * 100) : 0,
+          bestStreak: p.longest_streak ?? 0,
+          totalScore,
           recentScores:
-            recentResults?.map((r: any) => ({
-              date: r.deck_date,
-              score: r.total_score,
+            recentScores?.map((s: any) => ({
+              date: new Date(s.created_at).toLocaleDateString(),
+              score: s.total_points ?? 0,
             })) ?? [],
-          unlockedAchievements: profile.unlocked_achievements ?? [],
+          unlockedAchievements:
+            achievements?.map((a: any) => a.achievement_type) ?? [],
         });
       } catch (err) {
         console.error("Failed to fetch user stats:", err);

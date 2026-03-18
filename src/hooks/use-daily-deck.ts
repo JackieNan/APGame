@@ -5,7 +5,6 @@ import { createClient } from "@/lib/supabase/client";
 
 export interface DeckEvent {
   id: string;
-  event_id: string;
   title: string;
   description: string;
   hook_text: string;
@@ -19,23 +18,13 @@ export interface DeckEvent {
 
 export interface DailyDeck {
   id: string;
-  deck_date: string;
-  created_at: string;
-}
-
-export interface UserPrediction {
-  id: string;
-  event_id: string;
-  selected_outcome: string;
-  reasoning: string | null;
-  is_correct: boolean | null;
-  points_earned: number | null;
+  date: string;
+  golden_card_index: number;
 }
 
 export function useDailyDeck() {
   const [deck, setDeck] = useState<DailyDeck | null>(null);
   const [events, setEvents] = useState<DeckEvent[]>([]);
-  const [predictions, setPredictions] = useState<UserPrediction[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasPlayed, setHasPlayed] = useState(false);
 
@@ -53,7 +42,7 @@ export function useDailyDeck() {
         const { data: deckData } = await supabase
           .from("daily_decks")
           .select("*")
-          .eq("deck_date", today)
+          .eq("date", today)
           .single();
 
         if (!deckData) {
@@ -61,45 +50,61 @@ export function useDailyDeck() {
           return;
         }
 
-        setDeck(deckData);
+        const deckRow = deckData as any;
+        setDeck({
+          id: deckRow.id,
+          date: deckRow.date,
+          golden_card_index: deckRow.golden_card_index,
+        });
 
-        // Fetch events for this deck
-        const { data: deckEvents } = await supabase
-          .from("deck_events")
-          .select("*, events(*)")
-          .eq("deck_id", deckData.id)
-          .order("position", { ascending: true });
+        // Fetch events by IDs stored in deck
+        const eventIds = deckRow.event_ids as string[];
+        if (eventIds && eventIds.length > 0) {
+          const { data: eventsData } = await supabase
+            .from("events")
+            .select("*")
+            .in("id", eventIds);
 
-        if (deckEvents) {
-          const mapped: DeckEvent[] = deckEvents.map((de: any) => ({
-            id: de.id,
-            event_id: de.event_id,
-            title: de.events?.title ?? "Unknown Event",
-            description: de.events?.description ?? "",
-            hook_text: de.events?.hook_text ?? de.events?.title ?? "",
-            category: de.events?.category ?? "general",
-            market_probability: de.events?.market_probability ?? 0.5,
-            outcomes: de.events?.outcomes ?? [
-              { name: "Yes", probability: 0.5 },
-              { name: "No", probability: 0.5 },
-            ],
-            is_golden: de.is_golden ?? false,
-            source: de.events?.source ?? "unknown",
-            source_id: de.events?.source_id ?? "",
-          }));
-          setEvents(mapped);
+          if (eventsData) {
+            // Maintain the order from event_ids
+            const eventsMap = new Map(
+              eventsData.map((e: any) => [e.id, e])
+            );
+            const mapped: DeckEvent[] = eventIds
+              .map((id, index) => {
+                const e = eventsMap.get(id) as any;
+                if (!e) return null;
+                return {
+                  id: e.id,
+                  title: e.title ?? "Unknown Event",
+                  description: e.description ?? "",
+                  hook_text: e.hook_text ?? e.title ?? "",
+                  category: e.category ?? "general",
+                  market_probability: e.market_probability ?? 0.5,
+                  outcomes: e.outcomes ?? [
+                    { name: "Yes", probability: 0.5 },
+                    { name: "No", probability: 0.5 },
+                  ],
+                  is_golden: index === deckRow.golden_card_index,
+                  source: e.source ?? "unknown",
+                  source_id: e.source_id ?? "",
+                };
+              })
+              .filter(Boolean) as DeckEvent[];
+            setEvents(mapped);
+          }
         }
 
-        // Fetch user's predictions for today's deck
+        // Check if user already played
         if (user) {
           const { data: predData } = await supabase
             .from("predictions")
-            .select("*")
+            .select("id")
             .eq("user_id", user.id)
-            .eq("deck_id", deckData.id);
+            .eq("deck_id", deckRow.id)
+            .limit(1);
 
           if (predData && predData.length > 0) {
-            setPredictions(predData);
             setHasPlayed(true);
           }
         }
@@ -113,5 +118,5 @@ export function useDailyDeck() {
     fetchDeck();
   }, []);
 
-  return { deck, events, predictions, isLoading, hasPlayed };
+  return { deck, events, isLoading, hasPlayed };
 }

@@ -34,83 +34,62 @@ export default function LeaderboardPage() {
     } = await supabase.auth.getUser();
     if (user) setCurrentUserId(user.id);
 
-    let data: any[] | null = null;
+    // Query scores table and aggregate
+    let query = supabase.from("scores").select("user_id, total_points, created_at");
 
-    if (period === "alltime") {
-      const res = await supabase
-        .from("users")
-        .select("id, display_name, avatar_url, total_score")
-        .order("total_score", { ascending: false })
-        .limit(50);
-      data = res.data;
-    } else {
-      // daily or weekly - query daily_results aggregated
-      const today = new Date();
-      let startDate: string;
-
-      if (period === "daily") {
-        startDate = today.toISOString().split("T")[0];
-      } else {
-        const weekAgo = new Date(today);
-        weekAgo.setDate(weekAgo.getDate() - 7);
-        startDate = weekAgo.toISOString().split("T")[0];
-      }
-
-      const res = await supabase
-        .from("daily_results")
-        .select("user_id, total_score, users(display_name, avatar_url)")
-        .gte("deck_date", startDate)
-        .order("total_score", { ascending: false })
-        .limit(50);
-
-      if (res.data) {
-        // Aggregate scores per user
-        const userScores = new Map<
-          string,
-          { displayName: string; avatarUrl: string | null; score: number }
-        >();
-
-        for (const row of res.data as any[]) {
-          const uid = row.user_id;
-          const existing = userScores.get(uid);
-          if (existing) {
-            existing.score += row.total_score ?? 0;
-          } else {
-            userScores.set(uid, {
-              displayName: row.users?.display_name ?? "Unknown",
-              avatarUrl: row.users?.avatar_url ?? null,
-              score: row.total_score ?? 0,
-            });
-          }
-        }
-
-        const sorted = [...userScores.entries()]
-          .sort((a, b) => b[1].score - a[1].score)
-          .map(([userId, info], i) => ({
-            rank: i + 1,
-            userId,
-            displayName: info.displayName,
-            avatarUrl: info.avatarUrl,
-            score: info.score,
-          }));
-
-        setEntries((prev) => ({ ...prev, [period]: sorted }));
-        setIsLoading(false);
-        return;
-      }
+    if (period === "daily") {
+      const today = new Date().toISOString().split("T")[0];
+      query = query
+        .gte("created_at", `${today}T00:00:00Z`)
+        .lte("created_at", `${today}T23:59:59Z`);
+    } else if (period === "weekly") {
+      const weekAgo = new Date();
+      weekAgo.setDate(weekAgo.getDate() - 7);
+      query = query.gte("created_at", weekAgo.toISOString());
     }
 
-    if (data) {
-      const mapped: LeaderboardEntry[] = data.map((row: any, i: number) => ({
-        rank: i + 1,
-        userId: row.id,
-        displayName: row.display_name ?? "Unknown",
-        avatarUrl: row.avatar_url ?? null,
-        score: row.total_score ?? 0,
-      }));
-      setEntries((prev) => ({ ...prev, [period]: mapped }));
+    const { data: scores } = await query;
+
+    if (!scores || scores.length === 0) {
+      setEntries((prev) => ({ ...prev, [period]: [] }));
+      setIsLoading(false);
+      return;
     }
 
+    // Aggregate by user
+    const userScores = new Map<string, number>();
+    for (const s of scores as any[]) {
+      userScores.set(
+        s.user_id,
+        (userScores.get(s.user_id) ?? 0) + (s.total_points ?? 0)
+      );
+    }
+
+    // Get user profiles
+    const userIds = [...userScores.keys()];
+    const { data: profiles } = await supabase
+      .from("users")
+      .select("id, display_name, avatar_url")
+      .in("id", userIds);
+
+    const profileMap = new Map(
+      (profiles ?? []).map((p: any) => [p.id, p])
+    );
+
+    const ranked: LeaderboardEntry[] = [...userScores.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([userId, score], i) => {
+        const profile = profileMap.get(userId) as any;
+        return {
+          rank: i + 1,
+          userId,
+          displayName: profile?.display_name ?? "Unknown",
+          avatarUrl: profile?.avatar_url ?? null,
+          score,
+        };
+      });
+
+    setEntries((prev) => ({ ...prev, [period]: ranked }));
     setIsLoading(false);
   }
 
@@ -160,6 +139,10 @@ export default function LeaderboardPage() {
                 {isLoading && activePeriod === period ? (
                   <p className="text-center text-muted-foreground py-8 text-sm">
                     Loading rankings...
+                  </p>
+                ) : entries[period].length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8 text-sm">
+                    No scores yet for this period.
                   </p>
                 ) : (
                   <LeaderboardTable
