@@ -1,0 +1,20 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/fetch-events",
+      "schedule": "0 18 * * *"
+    },
+    {
+      "path": "/api/cron/generate-deck",
+      "schedule": "0 19 * * *"
+    },
+    {
+      "path": "/api/cron/check-resolutions",
+      "schedule": "0 * * * *"
+    },
+    {
+      "path": "/api/cron/daily-maintenance",
+      "schedule": "0 16 * * *"
+    }
+  ]
+}
