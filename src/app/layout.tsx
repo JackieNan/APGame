@@ -51,6 +51,12 @@ export default function RootLayout({
                 Play
               </Link>
               <Link
+                href="/practice"
+                className="text-slate-400 hover:text-amber-400 transition-colors"
+              >
+                Practice
+              </Link>
+              <Link
                 href="/leaderboard"
                 className="text-slate-400 hover:text-amber-400 transition-colors"
               >

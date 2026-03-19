@@ -1,6 +1,8 @@
 "use client";
 
+import { Suspense } from "react";
 import { useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { createClient } from "@/lib/supabase/client";
 import { ResultReveal } from "@/components/result-reveal";
@@ -32,15 +34,35 @@ interface ResultData {
 }
 
 export default function ResultsPage() {
+  return (
+    <Suspense fallback={
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-4xl animate-pulse">🔮</div>
+      </div>
+    }>
+      <ResultsContent />
+    </Suspense>
+  );
+}
+
+function ResultsContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [results, setResults] = useState<ResultData[]>([]);
   const [totalScore, setTotalScore] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [noResults, setNoResults] = useState(false);
+  const [allDeckIds, setAllDeckIds] = useState<string[]>([]);
+  const [currentDeckId, setCurrentDeckId] = useState<string | null>(null);
+  const [deckDate, setDeckDate] = useState<string | null>(null);
+
+  const paramDeckId = searchParams.get("deck_id");
 
   useEffect(() => {
     async function fetchResults() {
+      setIsLoading(true);
+      setNoResults(false);
       const supabase = createClient();
-      const today = new Date().toISOString().split("T")[0];
 
       const {
         data: { user },
@@ -51,21 +73,36 @@ export default function ResultsPage() {
         return;
       }
 
-      // Get latest deck the user played
-      const { data: userPreds } = await supabase
+      // Fetch all deck_ids the user has played, ordered by creation time desc
+      const { data: allPreds } = await supabase
         .from("predictions")
-        .select("deck_id")
+        .select("deck_id, created_at")
         .eq("user_id", user.id)
-        .order("created_at", { ascending: false })
-        .limit(1);
+        .order("created_at", { ascending: false });
 
-      if (!userPreds || userPreds.length === 0) {
+      // Dedupe deck_ids preserving order
+      const seenDeckIds = new Set<string>();
+      const orderedDeckIds: string[] = [];
+      for (const p of allPreds ?? []) {
+        const did = (p as any).deck_id as string;
+        if (!seenDeckIds.has(did)) {
+          seenDeckIds.add(did);
+          orderedDeckIds.push(did);
+        }
+      }
+      setAllDeckIds(orderedDeckIds);
+
+      if (orderedDeckIds.length === 0) {
         setIsLoading(false);
         setNoResults(true);
         return;
       }
 
-      const deckId = (userPreds[0] as any).deck_id;
+      // Determine which deck to show
+      const deckId = paramDeckId && seenDeckIds.has(paramDeckId)
+        ? paramDeckId
+        : orderedDeckIds[0];
+      setCurrentDeckId(deckId);
 
       // Get deck info
       const { data: deck } = await supabase
@@ -81,6 +118,7 @@ export default function ResultsPage() {
       }
 
       const deckData = deck as any;
+      setDeckDate(deckData.date);
 
       // Get all user predictions for this deck
       const { data: predictions } = await supabase
@@ -140,7 +178,7 @@ export default function ResultsPage() {
           isPending,
           oracleProbability: oracle
             ? `${(oracle.predicted_probability * 100).toFixed(0)}% Yes`
-            : "—",
+            : "\u2014",
           oracleReasoning: oracle?.claude_reasoning ?? "",
           isCorrect,
           isGolden,
@@ -167,7 +205,17 @@ export default function ResultsPage() {
     }
 
     fetchResults();
-  }, []);
+  }, [paramDeckId]);
+
+  const currentIndex = currentDeckId ? allDeckIds.indexOf(currentDeckId) : -1;
+  const hasPrev = currentIndex >= 0 && currentIndex < allDeckIds.length - 1;
+  const hasNext = currentIndex > 0;
+
+  function navigateDeck(direction: "prev" | "next") {
+    const newIndex = direction === "prev" ? currentIndex + 1 : currentIndex - 1;
+    const newDeckId = allDeckIds[newIndex];
+    router.push(`/results?deck_id=${newDeckId}`);
+  }
 
   if (isLoading) {
     return (
@@ -206,12 +254,42 @@ export default function ResultsPage() {
               ? "Results Revealed"
               : "Partial Results"}
         </h1>
+        {deckDate && (
+          <p className="text-xs text-slate-500">{deckDate}</p>
+        )}
         <p className="text-sm text-slate-400">
           {pendingCount > 0
             ? `${pendingCount} event${pendingCount > 1 ? "s" : ""} awaiting resolution. Oracle's analysis is below.`
             : "See how your predictions fared against reality and the Oracle."}
         </p>
       </div>
+
+      {/* Day navigation */}
+      {allDeckIds.length > 1 && (
+        <div className="flex items-center justify-between">
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!hasPrev}
+            onClick={() => navigateDeck("prev")}
+            className="text-slate-400 hover:text-slate-200"
+          >
+            &larr; Previous Day
+          </Button>
+          <span className="text-xs text-slate-500">
+            {allDeckIds.length - currentIndex} / {allDeckIds.length}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!hasNext}
+            onClick={() => navigateDeck("next")}
+            className="text-slate-400 hover:text-slate-200"
+          >
+            Next Day &rarr;
+          </Button>
+        </div>
+      )}
 
       <div className="space-y-4">
         {results.map((result, i) => (

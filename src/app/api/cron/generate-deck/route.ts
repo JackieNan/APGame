@@ -31,8 +31,17 @@ export async function GET(request: Request) {
       );
     }
 
+    // Dedup: exclude events used in recent decks
+    const { data: recentDecks } = await supabase
+      .from("daily_decks")
+      .select("event_ids")
+      .gte("date", new Date(Date.now() - 7 * 86400000).toISOString().split("T")[0]);
+    const recentEventIds = new Set((recentDecks ?? []).flatMap((d: any) => d.event_ids as string[]));
+    const dedupedCandidates = candidates.filter((e: any) => !recentEventIds.has(e.id));
+    const finalCandidates = dedupedCandidates.length >= 5 ? dedupedCandidates : candidates;
+
     // Map DB rows to the format curator expects
-    const curatorInput = candidates.map((e: any) => ({
+    const curatorInput = finalCandidates.map((e: any) => ({
       id: e.id,
       title: e.title,
       description: e.description,
